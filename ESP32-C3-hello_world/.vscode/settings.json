@@ -1,0 +1,13 @@
+{
+  "C_Cpp.intelliSenseEngine": "default",
+  "idf.espIdfPath": "/opt/esp-idf/v5.5.2",
+  "idf.pythonInstallPath": "/usr/bin/python3",
+  "idf.openOcdConfigs": [
+    "board/esp32c3-builtin.cfg"
+  ],
+  "idf.port": "detect",
+  "idf.toolsPath": "/opt/esp-idf/.espressif",
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32c3"
+  }
+}
