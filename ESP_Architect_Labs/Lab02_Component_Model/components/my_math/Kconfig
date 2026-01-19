@@ -1,0 +1,16 @@
+menu "Lab02_Component_Model"
+
+    config MY_MATH_ADD
+        bool "USE My_add(int a,int b)"
+        default "y"
+        help
+            you can use My_add in your project.
+
+    config MY_MATH_MULTIPLY
+        bool "USE My_multiply(int a,int b)"
+        default "n"
+        help
+            you can use My_multiply in your project.
+
+
+endmenu
