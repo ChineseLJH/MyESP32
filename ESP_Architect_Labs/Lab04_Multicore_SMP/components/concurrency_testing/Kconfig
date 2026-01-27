@@ -1,0 +1,29 @@
+menu "Lab04_Kconfig"
+
+    choice
+        prompt "Select Protection Method"
+        default SMP_RACE_CONDITION_NONE
+        help
+            Select the synchronization mechanism to protect the shared counter.
+            This determines how the two CPU cores will compete for the resource.
+
+        config SMP_RACE_CONDITION_NONE
+            bool "No Protection"
+            help
+                Do not use any lock. This should demonstrate a race condition error.
+
+        config SMP_RACE_CONDITION_SPINLOCK
+            bool "Protect with Spinlock"
+            help
+                Use a spinlock (atomic loop) to protect the critical section.
+                CPU will busy-wait if the lock is taken.
+
+        config SMP_RACE_CONDITION_MUTEX
+            bool "Protect with Mutex"
+            help
+                Use a FreeRTOS Mutex to protect the critical section.
+                Task will yield/sleep if the lock is taken.
+
+    endchoice
+
+endmenu
