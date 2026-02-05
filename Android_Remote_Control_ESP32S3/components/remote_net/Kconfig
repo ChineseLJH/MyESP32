@@ -1,0 +1,27 @@
+menu "Remote Control Network"
+
+    config RNET_WIFI_SSID
+        string "WiFi SSID"
+        default "chineseljh"
+        help
+            The SSID of the WiFi AP to connect to.
+
+    config RNET_WIFI_PASSWORD
+        string "WiFi Password"
+        default "12345678"
+        help
+            The password of the WiFi AP.
+
+    config RNET_TCP_PORT
+        int "TCP Server Port"
+        default 12345
+        help
+            Port for the remote control commands.
+
+    config RNET_UDP_PORT
+        int "UDP Broadcast Port"
+        default 54321
+        help
+            Port for device discovery broadcast.
+
+endmenu
