@@ -1,0 +1,33 @@
+menu "Lab05_Interrupt_HAL_ZeroCopy_IPC"
+
+    choice
+        prompt "IPC Transfer Strategy"
+        default IPC_MODE_COPY
+        help
+            Select the strategy for passing data from ISR to Task.
+
+        config IPC_MODE_COPY
+            bool "Naive Copy (Low Performance)"
+            help
+                FULL COPY. The ISR copies the entire 1KB struct into the Queue.
+                This blocks the CPU inside the interrupt handler.
+
+        config IPC_MODE_ZERO_COPY
+            bool "Zero Copy (High Performance)"
+            help
+                POINTER ONLY. The ISR only passes a 4-byte pointer.
+                Requires a memory pool implementation.
+
+    endchoice
+
+    config IPC_TIMER_INTERVAL_US
+        int "Interrupt Interval (us)"
+        default 1000
+        range 5 1000000
+        help
+            Timer interrupt period.
+            1000us = 1kHz (Low load)
+            200us  = 5kHz (High load)
+            100us  = 10kHz (Stress test)
+
+endmenu
