@@ -119,7 +119,6 @@ static void udp_broadcast_task(void *pvParameters)
 static void udp_server_task(void *pvParameters)
 {
     char rx_buffer[128]; 
-    double num = 0; // 计数器
 
     struct sockaddr_in dest_addr;
     dest_addr.sin_family = AF_INET;
@@ -146,8 +145,8 @@ static void udp_server_task(void *pvParameters)
 
     // UDP 无连接事件，使用接收超时做在线状态判断
     struct timeval timeout;
-    timeout.tv_sec = 2;
-    timeout.tv_usec = 0; // 500ms
+    timeout.tv_sec = 2; // 2秒超时
+    timeout.tv_usec = 0;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
     ESP_LOGI(TAG, "UDP Server listening on port %d", RNET_UDP_CTRL_PORT);
@@ -165,13 +164,15 @@ static void udp_server_task(void *pvParameters)
 
             process_line(rx_buffer, len);
 
-            num++;
-            // 每接收 10 个 UDP 数据包（即 200ms），才执行一次 sendto 回复
-            if (((uint32_t)num) % 10 == 0) {
-                char send_buf[32];
-                // 如果你将 num 定义改为了 uint32_t，这里的格式化字符应改为 "%lu\r\n"
-                int slen = snprintf(send_buf, sizeof(send_buf), "%.0f\r\n", num);
-                sendto(sock, send_buf, slen, 0, (struct sockaddr *)&source_addr, addr_len);
+            // 引入一个仅用于触发回传的局部静态或任务级变量
+            static uint32_t local_rx_count = 0;
+            local_rx_count++;
+            
+            // 严格每接收 10 个数据包，回复一次固定的 "ACK" 报文，不携带递增数字
+            if (local_rx_count == 10) {
+                local_rx_count = 0; // 重置计数器
+                // 回发 3 字节的 "ACK" 代替原有的字符串化数字
+                sendto(sock, "ACK", 3, 0, (struct sockaddr *)&source_addr, addr_len);
             }
         } else {
             if (g_udp_active) {
