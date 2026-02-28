@@ -146,8 +146,8 @@ static void udp_server_task(void *pvParameters)
 
     // UDP 无连接事件，使用接收超时做在线状态判断
     struct timeval timeout;
-    timeout.tv_sec = 0;
-    timeout.tv_usec = 500000; // 500ms
+    timeout.tv_sec = 2;
+    timeout.tv_usec = 0; // 500ms
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
     ESP_LOGI(TAG, "UDP Server listening on port %d", RNET_UDP_CTRL_PORT);
@@ -166,14 +166,18 @@ static void udp_server_task(void *pvParameters)
             process_line(rx_buffer, len);
 
             num++;
-            char send_buf[32];
-            int slen = snprintf(send_buf, sizeof(send_buf), "%.0f\r\n", num);
-            sendto(sock, send_buf, slen, 0, (struct sockaddr *)&source_addr, addr_len);
+            // 每接收 10 个 UDP 数据包（即 200ms），才执行一次 sendto 回复
+            if (((uint32_t)num) % 10 == 0) {
+                char send_buf[32];
+                // 如果你将 num 定义改为了 uint32_t，这里的格式化字符应改为 "%lu\r\n"
+                int slen = snprintf(send_buf, sizeof(send_buf), "%.0f\r\n", num);
+                sendto(sock, send_buf, slen, 0, (struct sockaddr *)&source_addr, addr_len);
+            }
         } else {
             if (g_udp_active) {
                 ESP_LOGI(TAG, "UDP timeout, client deemed disconnected. Resuming broadcast...");
                 g_udp_active = false;
-                num = 0;
+                // num = 0;
             }
         }
     }
