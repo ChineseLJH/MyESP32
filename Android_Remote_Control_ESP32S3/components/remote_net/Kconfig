@@ -12,11 +12,11 @@ menu "Remote Control Network"
         help
             The password of the WiFi AP.
 
-    config RNET_TCP_PORT
-        int "TCP Server Port"
-        default 12345
+    config RNET_UDP_CONTROL_PORT
+        int "UDP Control Port"
+        default 6666
         help
-            Port for the remote control commands.
+            Port for the UDP remote control commands.
 
     config RNET_UDP_PORT
         int "UDP Broadcast Port"

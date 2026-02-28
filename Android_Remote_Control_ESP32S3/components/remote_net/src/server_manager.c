@@ -11,7 +11,13 @@
 #include <stdio.h> 
 
 static const char *TAG = "RNET_SERVER";
-static volatile bool g_tcp_connected = false;
+static volatile bool g_udp_active = false;
+
+#ifdef CONFIG_RNET_UDP_CONTROL_PORT
+#define RNET_UDP_CTRL_PORT CONFIG_RNET_UDP_CONTROL_PORT
+#else
+#define RNET_UDP_CTRL_PORT CONFIG_RNET_UDP_PORT
+#endif
 
 /* --- CRC16 算法 (与 Qt 上位机一致) --- */
 static uint16_t calculate_crc16(const char *data, int len)
@@ -93,7 +99,7 @@ static void udp_broadcast_task(void *pvParameters)
     broadcast_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
 
     while (1) {
-        if (!g_tcp_connected) {
+        if (!g_udp_active) {
             esp_netif_ip_info_t ip_info;
             esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
             if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
@@ -109,95 +115,67 @@ static void udp_broadcast_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-/* --- TCP 服务端任务 --- */
-static void tcp_server_task(void *pvParameters)
+/* --- UDP 服务端任务 --- */
+static void udp_server_task(void *pvParameters)
 {
     char rx_buffer[128]; 
-    static char line_buffer[256]; 
-    static int line_pos = 0;
     double num = 0; // 计数器
 
     struct sockaddr_in dest_addr;
     dest_addr.sin_family = AF_INET;
-    dest_addr.sin_port = htons(CONFIG_RNET_TCP_PORT);
+    dest_addr.sin_port = htons(RNET_UDP_CTRL_PORT);
     dest_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    int listen_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+    if (sock < 0) {
+        ESP_LOGE(TAG, "Unable to create UDP socket");
+        vTaskDelete(NULL);
+        return;
+    }
     
     // 允许地址复用
     int opt = 1;
-    setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     
-    bind(listen_sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-    listen(listen_sock, 1);
+    if (bind(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr)) < 0) {
+        ESP_LOGE(TAG, "UDP bind failed");
+        close(sock);
+        vTaskDelete(NULL);
+        return;
+    }
 
-    ESP_LOGI(TAG, "TCP Server listening on port %d", CONFIG_RNET_TCP_PORT);
+    // UDP 无连接事件，使用接收超时做在线状态判断
+    struct timeval timeout;
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 500000; // 500ms
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+    ESP_LOGI(TAG, "UDP Server listening on port %d", RNET_UDP_CTRL_PORT);
 
     while (1) {
         struct sockaddr_in source_addr;
         socklen_t addr_len = sizeof(source_addr);
-        
-        int sock = accept(listen_sock, (struct sockaddr *)&source_addr, &addr_len);
-        if (sock < 0) continue;
 
-        ESP_LOGI(TAG, "Client connected: %s", inet_ntoa(source_addr.sin_addr));
-        
-        // --- 优化 1: 禁用 Nagle 算法 (降低延迟) ---
-        int nodelay = 1;
-        setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+        int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer) - 1, 0,
+                           (struct sockaddr *)&source_addr, &addr_len);
 
-        // --- 优化 2: 设置发送超时 (防止 send 卡死) ---
-        // 如果手机卡顿不接收数据，ESP32 最多等 100ms，超时就丢弃，防止阻塞接收循环
-        struct timeval timeout;
-        timeout.tv_sec = 0;
-        timeout.tv_usec = 100000; // 100ms
-        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+        if (len > 0) {
+            g_udp_active = true;
+            rx_buffer[len] = 0;
 
-        g_tcp_connected = true;
-        line_pos = 0; 
-        // 每次新连接重置计数器 (可选)
-        num = 0;
+            process_line(rx_buffer, len);
 
-        while (1) {
-            int len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
-
-            if (len <= 0) {
-                ESP_LOGI(TAG, "Connection closed");
-                break;
-            } else {
-                for (int i = 0; i < len; i++) {
-                    char c = rx_buffer[i];
-                    
-                    if (c == '\n') {
-                        // 1. 处理完整的一行
-                        line_buffer[line_pos] = 0; 
-                        process_line(line_buffer, line_pos);
-                        
-                        // 2. 【已恢复】回传计数给手机
-                        // 这对 Qt 上位机判断连接心跳非常重要
-                        num++;
-                        char send_buf[32];
-                        int slen = snprintf(send_buf, sizeof(send_buf), "%.0f\r\n", num);
-                        
-                        // 因为设置了 SO_SNDTIMEO，即使网络堵塞这里也不会死锁
-                        send(sock, send_buf, slen, 0);
-
-                        // 3. 准备下一行
-                        line_pos = 0; 
-                    } else {
-                        if (line_pos < sizeof(line_buffer) - 1) {
-                            line_buffer[line_pos++] = c;
-                        } else {
-                            line_pos = 0; // 溢出保护
-                        }
-                    }
-                }
+            num++;
+            char send_buf[32];
+            int slen = snprintf(send_buf, sizeof(send_buf), "%.0f\r\n", num);
+            sendto(sock, send_buf, slen, 0, (struct sockaddr *)&source_addr, addr_len);
+        } else {
+            if (g_udp_active) {
+                ESP_LOGI(TAG, "UDP timeout, client deemed disconnected. Resuming broadcast...");
+                g_udp_active = false;
+                num = 0;
             }
         }
-
-        close(sock);
-        g_tcp_connected = false;
-        ESP_LOGI(TAG, "Client disconnected");
     }
     vTaskDelete(NULL);
 }
@@ -206,6 +184,6 @@ void remote_net_start(void)
 {
     rnet_internal_wifi_init();
     xTaskCreate(udp_broadcast_task, "udp_bc", 4096, NULL, 3, NULL);
-    // TCP 优先级高一点，保证不丢包
-    xTaskCreate(tcp_server_task, "tcp_sv", 4096, NULL, 10, NULL);
+    // 控制通道优先级高一点，保证不丢包
+    xTaskCreate(udp_server_task, "udp_sv", 4096, NULL, 10, NULL);
 }
