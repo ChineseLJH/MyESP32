@@ -10,6 +10,9 @@
 #include <sys/param.h>
 #include <stdio.h> 
 
+#include "driver/uart.h"
+#include "esp_timer.h"
+
 static const char *TAG = "RNET_SERVER";
 static volatile bool g_udp_active = false;
 
@@ -38,21 +41,28 @@ static uint16_t calculate_crc16(const char *data, int len)
  */
 static void forward_packet_to_uart(const char *content)
 {
+    static int64_t last_packet_time = 0;
+    int64_t current_time = esp_timer_get_time(); // 获取当前微秒数
+
     char data_part[100];
-    
-    // 1. 重建带括号的数据体: [content]
     snprintf(data_part, sizeof(data_part), "[%s]", content);
 
-    // 2. 计算 CRC16
     uint16_t crc = calculate_crc16(data_part, strlen(data_part));
-
-    // 3. 拼接最终包: [数据]CRC
     uint8_t hi = (crc >> 8) & 0xFF;
     uint8_t lo = crc & 0xFF;
     
-    // 4. 串口透传 (printf 默认输出到 UART0)
-    // 注意：波特率建议设为 921600 或更高，否则 10ms 一包的打印会阻塞 CPU
+    // 物理输出
     printf("%s%02X%02X\n", data_part, hi, lo);
+
+    // 计算并记录间隔 (Interval)
+    int64_t interval = 0;
+    if (last_packet_time != 0) {
+        interval = current_time - last_packet_time;
+    }
+    last_packet_time = current_time;
+
+    // 打印到 monitor
+    ESP_LOGI(TAG, "Interval: %lld us", interval);
 }
 
 /**
@@ -119,7 +129,6 @@ static void udp_broadcast_task(void *pvParameters)
 static void udp_server_task(void *pvParameters)
 {
     char rx_buffer[128]; 
-
     struct sockaddr_in dest_addr;
     dest_addr.sin_family = AF_INET;
     dest_addr.sin_port = htons(RNET_UDP_CTRL_PORT);
@@ -132,7 +141,6 @@ static void udp_server_task(void *pvParameters)
         return;
     }
     
-    // 允许地址复用
     int opt = 1;
     setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     
@@ -143,10 +151,8 @@ static void udp_server_task(void *pvParameters)
         return;
     }
 
-    // UDP 无连接事件，使用接收超时做在线状态判断
-    struct timeval timeout;
-    timeout.tv_sec = 2; // 2秒超时
-    timeout.tv_usec = 0;
+    // 设置接收超时，用于判定客户端离线
+    struct timeval timeout = { .tv_sec = 2, .tv_usec = 0 };
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
     ESP_LOGI(TAG, "UDP Server listening on port %d", RNET_UDP_CTRL_PORT);
@@ -155,38 +161,57 @@ static void udp_server_task(void *pvParameters)
         struct sockaddr_in source_addr;
         socklen_t addr_len = sizeof(source_addr);
 
+        // 1. 阻塞接收：捕获网络冻结恢复后的第一个包
         int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer) - 1, 0,
                            (struct sockaddr *)&source_addr, &addr_len);
 
         if (len > 0) {
             g_udp_active = true;
-            rx_buffer[len] = 0;
 
-            process_line(rx_buffer, len);
+            // // 【核心：突发吸收器】挂起 10ms，让空中积压的后续历史包全部进入 LwIP 邮箱
+            // vTaskDelay(1); 
 
-            // 引入一个仅用于触发回传的局部静态或任务级变量
+            char latest_packet[128];
+            int latest_len = len;
+            memcpy(latest_packet, rx_buffer, len);
+
+            // 2. 抽空机制：循环提取所有积压包，仅保留最后一帧（头部丢弃）
+            while (1) {
+                int n = recvfrom(sock, rx_buffer, sizeof(rx_buffer) - 1, MSG_DONTWAIT,
+                                 (struct sockaddr *)&source_addr, &addr_len);
+                if (n > 0) {
+                    memcpy(latest_packet, rx_buffer, n);
+                    latest_len = n;
+                } else {
+                    break; // 邮箱已空，此时 latest_packet 存储的是绝对最新帧
+                }
+            }
+
+            // 3. 解析并透传给 STM32 (内部包含 921600 波特率的 printf 和间隔打印)
+            latest_packet[latest_len] = 0;
+            process_line(latest_packet, latest_len);
+
+            // 4. ACK 逻辑：每处理 10 个有效包回复一次
             static uint32_t local_rx_count = 0;
-            local_rx_count++;
-            
-            // 严格每接收 10 个数据包，回复一次固定的 "ACK" 报文，不携带递增数字
-            if (local_rx_count == 10) {
-                local_rx_count = 0; // 重置计数器
-                // 回发 3 字节的 "ACK" 代替原有的字符串化数字
+            if (++local_rx_count >= 10) {
+                local_rx_count = 0;
                 sendto(sock, "ACK", 3, 0, (struct sockaddr *)&source_addr, addr_len);
             }
         } else {
             if (g_udp_active) {
-                ESP_LOGI(TAG, "UDP timeout, client deemed disconnected. Resuming broadcast...");
+                ESP_LOGI(TAG, "UDP timeout, client deemed disconnected.");
                 g_udp_active = false;
-                // num = 0;
             }
         }
     }
+    close(sock);
     vTaskDelete(NULL);
 }
 
 void remote_net_start(void)
 {
+    uart_set_baudrate(UART_NUM_0, 921600);
+
     rnet_internal_wifi_init();
     xTaskCreate(udp_broadcast_task, "udp_bc", 4096, NULL, 3, NULL);
     // 控制通道优先级高一点，保证不丢包
