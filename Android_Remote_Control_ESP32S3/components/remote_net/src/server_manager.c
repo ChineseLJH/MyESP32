@@ -62,7 +62,7 @@ static void forward_packet_to_uart(const char *content)
     last_packet_time = current_time;
 
     // 打印到 monitor
-    ESP_LOGI(TAG, "Interval: %lld us", interval);
+    // ESP_LOGI(TAG, "Interval: %lld us", interval);
 }
 
 /**
