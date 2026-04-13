@@ -81,16 +81,35 @@ static void process_line(char *line, int length)
         // 寻找包尾 ]
         char *end_ptr = strchr(start_ptr, ']'); 
         
-        if (end_ptr != NULL && end_ptr > start_ptr) {
-            int content_len = end_ptr - start_ptr - 1;
+        // 【最小改动】：加了一个 strlen(end_ptr) >= 5 的判断，确保 ']' 后面至少有 4位CRC 
+        // 因为 end_ptr 指向 ']'，所以如果后面有 4 个字符，它的长度至少是 5
+        if (end_ptr != NULL && end_ptr > start_ptr && strlen(end_ptr) >= 5) {
             
-            if (content_len > 0 && content_len < 100) {
-                char content[100];
-                memcpy(content, start_ptr + 1, content_len);
-                content[content_len] = 0; 
+            // 1. 提取收到的 4 位 CRC (16进制字符串转数字)
+            char recv_crc_str[5];
+            memcpy(recv_crc_str, end_ptr + 1, 4);
+            recv_crc_str[4] = 0;
+            uint16_t recv_crc = (uint16_t)strtol(recv_crc_str, NULL, 16);
 
-                // 转发给 STM32
-                forward_packet_to_uart(content);
+            // 2. 计算本地 CRC（对包含头尾的 [...] 进行计算）
+            int packet_len = end_ptr - start_ptr + 1; 
+            uint16_t calc_crc = calculate_crc16(start_ptr, packet_len);
+
+            // 3. 拦截网关：只有 CRC 匹配，才允许透传
+            if (recv_crc == calc_crc) {
+                int content_len = end_ptr - start_ptr - 1;
+                
+                if (content_len > 0 && content_len < 100) {
+                    char content[100];
+                    memcpy(content, start_ptr + 1, content_len);
+                    content[content_len] = 0; 
+
+                    // 转发给 STM32（原封不动，它里面会重新拼装 [...] 和 CRC）
+                    forward_packet_to_uart(content);
+                }
+            } else {
+                // 如果需要调试，可以解开下面的注释
+                // ESP_LOGW(TAG, "CRC Error! Recv: %04X, Calc: %04X", recv_crc, calc_crc);
             }
         }
     }
