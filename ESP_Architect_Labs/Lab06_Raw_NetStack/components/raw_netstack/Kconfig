@@ -1,0 +1,43 @@
+menu "Lab06_Raw_NetStack"
+
+    config WIFI_SSID
+        string "WiFi SSID"
+        default "chineseljh"
+        help
+            The SSID of the WiFi AP to connect to.
+
+    config WIFI_PASSWORD
+        string "WiFi Password"
+        default "12345678"
+        help
+            The password of the WiFi AP.
+
+    config RAW_NETSTACK_TCP_PORT
+        int "TCP Server Listen Port"
+        default 3333
+        range 1024 65535
+        help
+            The port number that the standard POSIX TCP server will bind and listen to.
+            Ports under 1024 are reserved for well-known services.
+
+    config RAW_NETSTACK_LISTEN_BACKLOG
+        int "TCP Listen Backlog Size"
+        default 5
+        range 1 32
+        help
+            The maximum length to which the queue of pending connections for listen_fd may grow.
+
+    config RAW_NETSTACK_TASK_STACK_SIZE
+        int "TCP Server Task Stack Size"
+        default 4096
+        help
+            Stack size for the FreeRTOS task running the socket server.
+
+    config RAW_NETSTACK_TASK_PRIORITY
+        int "TCP Server Task Priority"
+        default 5
+        range 1 25
+        help
+            FreeRTOS task priority.
+
+endmenu
