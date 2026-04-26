@@ -1,17 +1,5 @@
 menu "Lab06_Raw_NetStack"
 
-    config WIFI_SSID
-        string "WiFi SSID"
-        default "chineseljh"
-        help
-            The SSID of the WiFi AP to connect to.
-
-    config WIFI_PASSWORD
-        string "WiFi Password"
-        default "12345678"
-        help
-            The password of the WiFi AP.
-
     config RAW_NETSTACK_TCP_PORT
         int "TCP Server Listen Port"
         default 3333
@@ -39,5 +27,23 @@ menu "Lab06_Raw_NetStack"
         range 1 25
         help
             FreeRTOS task priority.
+
+    config TCP_KEEP_IDLE
+        int "TCP Keep-Alive Idle Time (s)"
+        default 5
+        help
+            Idle time before sending the first keep-alive probe.
+
+    config TCP_KEEP_INTERVAL
+        int "TCP Keep-Alive Interval (s)"
+        default 2
+        help
+            Time between subsequent keep-alive probes.
+
+    config TCP_KEEP_COUNT
+        int "TCP Keep-Alive Count"
+        default 3
+        help
+            Number of unacknowledged probes before considering the connection dead.
 
 endmenu
