@@ -2,11 +2,27 @@
 #include <sys/param.h>
 #include "esp_log.h"
 #include "lwip/sockets.h"
+#include "freertos/FreeRTOS.h"
 
 #include "protocol_parser.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "TCP_SERVER";
+
+
+static void client_handler_task(void *pvParameters)
+{
+
+    int client_sock = (int)pvParameters;
+
+    ESP_LOGI(TAG, "New client task started, sock: %d", client_sock);
+
+    do_retransmit(client_sock);
+
+    shutdown(client_sock, 0);
+    close(client_sock);
+    vTaskDelete(NULL); 
+}
 
 void tcp_server_task(void *pvParameters)
 {
@@ -76,10 +92,11 @@ void tcp_server_task(void *pvParameters)
         }
         ESP_LOGI(TAG, "Socket accepted ip address: %s", addr_str);
 
-        do_retransmit(sock);
+        // do_retransmit(sock);
+        xTaskCreate(client_handler_task, "retransmit", 4096, (void *)sock, 4, NULL);
 
-        shutdown(sock, 0);
-        close(sock);
+        // shutdown(sock, 0);
+        // close(sock);
     }
 
 CLEAN_UP:
